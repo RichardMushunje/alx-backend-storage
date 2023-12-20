@@ -1,32 +1,47 @@
 #!/usr/bin/env python3
-""" Redis Module """
 
-from functools import wraps
-import redis
 import requests
-from typing import Callable
+import redis
+from functools import wraps
+from time import time
 
-redis_ = redis.Redis()
+# Connect to Redis server
+redis_client = redis.StrictRedis(host='localhost', port=6379, db=0)
 
+def cache_with_expiration(expiration_time):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            url = args[0]
+            cache_key = f"count:{url}"
+            cached_result = redis_client.get(cache_key)
 
-def count_requests(method: Callable) -> Callable:
-    """ Decortator for counting """
-    @wraps(method)
-    def wrapper(url):  # sourcery skip: use-named-expression
-        """ Wrapper for decorator """
-        redis_.incr(f"count:{url}")
-        cached_html = redis_.get(f"cached:{url}")
-        if cached_html:
-            return cached_html.decode('utf-8')
-        html = method(url)
-        redis_.setex(f"cached:{url}", 10, html)
-        return html
+            if cached_result:
+                return cached_result.decode('utf-8')
 
-    return wrapper
+            result = func(*args, **kwargs)
 
+            # Cache the result with expiration time
+            redis_client.setex(cache_key, expiration_time, result)
 
-@count_requests
-def get_page(url: str) -> str:
-    """ Obtain the HTML content of a  URL """
-    req = requests.get(url)
-    return req.text
+            return result
+
+        return wrapper
+    return decorator
+
+@cache_with_expiration(expiration_time=10)
+def get_page(url):
+    response = requests.get(url)
+    return response.text
+
+# Example usage
+if __name__ == "__main__":
+    slow_url = "http://slowwly.robertomurray.co.uk/delay/5000/url/http://www.google.com"
+
+    # First request, uncached
+    page_content = get_page(slow_url)
+    print("First request:", page_content)
+
+    # Second request, cached
+    page_content = get_page(slow_url)
+    print("Second request:", page_content)
